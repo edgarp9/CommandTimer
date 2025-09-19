@@ -22,6 +22,21 @@ A simple Windows timer that runs a command when it's done.
 
 When the time is up, your command will run automatically.
 
+## ⚙️ Command-Line Arguments
+
+You can also launch the application with arguments to set the timer and command.
+
+  * Supports `-start`, `-h`, `-m`, `-s`, and `-cmd` arguments.
+  * The `-cmd` argument must be the last one in the command line.
+
+**Example:**
+To set a 30-minute timer that starts immediately and opens Notepad when finished:
+
+```
+CommandTimer.exe -start -m 30 -cmd "notepad.exe"
+```
+
+
 ## Command Examples
 
 Here are some examples of commands you can use:
