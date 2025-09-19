@@ -22,7 +22,7 @@ A simple Windows timer that runs a command when it's done.
 
 When the time is up, your command will run automatically.
 
-### Command Examples
+## Command Examples
 
 Here are some examples of commands you can use:
 
