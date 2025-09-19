@@ -4,53 +4,81 @@
 #include <vector>
 #include <format>
 #include <stdexcept>
+#include <algorithm>
 
-// Enum to represent the state of the timer.
-enum class TimerState {
+//================================================================================================//
+// Global Variables and Constants
+//================================================================================================//
+
+// --- Application State ---
+enum class TimerState
+{
     STOPPED,
     RUNNING,
     PAUSED
 };
 
-// --- Global Variables ---
-HINSTANCE g_hInst;
-HWND g_hWnd;
-UINT_PTR g_timerId = 0;
-int g_remainingSeconds = 0;
-TimerState g_timerState = TimerState::STOPPED;
-HFONT g_hDefaultFont = NULL; // Default font for UI controls.
-HFONT g_hTimerFont = NULL; // Large font for the timer display.
-
 // --- Control IDs ---
-#define IDC_EDIT_HOUR 101
-#define IDC_EDIT_MIN 102
-#define IDC_EDIT_SEC 103
-#define IDC_EDIT_CMD 104
-#define IDC_BTN_START 105
-#define IDC_BTN_PAUSE 106
-#define IDC_BTN_RESET 107
-#define IDC_STATIC_TIMER_DISPLAY 108
-#define IDC_BTN_HOMEPAGE 109
+constexpr int IDC_EDIT_HOUR = 101;
+constexpr int IDC_EDIT_MIN = 102;
+constexpr int IDC_EDIT_SEC = 103;
+constexpr int IDC_COMBO_CMD = 104;
+constexpr int IDC_BTN_START = 105;
+constexpr int IDC_BTN_PAUSE = 106;
+constexpr int IDC_BTN_RESET = 107;
+constexpr int IDC_STATIC_TIMER_DISPLAY = 108;
+constexpr int IDC_BTN_HOMEPAGE = 109;
+constexpr int MAX_HISTORY = 20;
 
-// --- Function Prototypes ---
+// --- Global Handles and Variables ---
+HINSTANCE g_hInst;
+HWND      g_hWnd;
+UINT_PTR  g_timerId = 0;
+int       g_remainingSeconds = 0;
+TimerState g_timerState = TimerState::STOPPED;
+HFONT     g_hDefaultFont = NULL;
+HFONT     g_hTimerFont = NULL;
+wchar_t   g_iniFilePath[MAX_PATH];
+
+//================================================================================================//
+// Function Prototypes
+//================================================================================================//
+
+// --- Core Win32 Functions ---
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
-void InitializeWindowControls(HWND);
-void RefreshTimerDisplay(HWND);
-void RunTimerCompletionCommand(HWND);
-void UpdateUIControlStates(HWND);
+int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int);
 
-// Button Command Handlers
-void OnStartButtonClick(HWND);
-void OnPauseButtonClick(HWND);
-void OnResetButtonClick(HWND);
-void OnHomepageButtonClick(HWND);
+// --- UI Management ---
+void CreateMainWindowControls(HWND hWnd);
+void UpdateTimerDisplay(HWND hWnd);
+void UpdateControlStatesByTimerStatus(HWND hWnd);
 
+// --- Event Handlers ---
+void OnStartButtonClick(HWND hWnd);
+void OnPauseButtonClick(HWND hWnd);
+void OnResetButtonClick(HWND hWnd);
+void OnHomepageButtonClick(HWND hWnd);
+
+// --- Core Logic ---
+void ExecuteTimerCommand(HWND hWnd);
+
+// --- INI File and History Management ---
+void SetIniFilePath();
+void LoadCommandHistory(HWND hWnd);
+void SaveCommandHistory(HWND hWnd);
+
+
+//================================================================================================//
+// Main Application Entry Point
+//================================================================================================//
 
 /**
  * @brief The main entry point for the application.
  */
-int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow) {
+int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine, int nCmdShow)
+{
     g_hInst = hInstance;
+    SetIniFilePath();
 
     const wchar_t CLASS_NAME[] = L"CommandTimerClass";
 
@@ -64,12 +92,16 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     RegisterClass(&wc);
 
     g_hWnd = CreateWindowEx(
-        0, CLASS_NAME, L"Command Timer v1",
+        0,
+        CLASS_NAME,
+        L"Command Timer v1.1",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
         CW_USEDEFAULT, CW_USEDEFAULT, 420, 280,
-        NULL, NULL, hInstance, NULL);
+        NULL, NULL, hInstance, NULL
+    );
 
-    if (g_hWnd == NULL) {
+    if (g_hWnd == NULL)
+    {
         return 0;
     }
 
@@ -77,7 +109,8 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     UpdateWindow(g_hWnd);
 
     MSG msg = {};
-    while (GetMessage(&msg, NULL, 0, 0)) {
+    while (GetMessage(&msg, NULL, 0, 0))
+    {
         TranslateMessage(&msg);
         DispatchMessage(&msg);
     }
@@ -85,188 +118,126 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     return 0;
 }
 
+//================================================================================================//
+// Window Procedure
+//================================================================================================//
+
 /**
  * @brief Processes messages for the main window.
  */
-LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam) {
-    switch (message) {
+LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
+{
+    switch (message)
+    {
     case WM_CREATE:
-        InitializeWindowControls(hWnd);
+    {
+        CreateMainWindowControls(hWnd);
         break;
-
+    }
     case WM_COMMAND:
     {
-        // Delegate command handling to specific functions.
-        switch (LOWORD(wParam)) {
-        case IDC_BTN_START:
-            OnStartButtonClick(hWnd);
-            break;
-        case IDC_BTN_PAUSE:
-            OnPauseButtonClick(hWnd);
-            break;
-        case IDC_BTN_RESET:
-            OnResetButtonClick(hWnd);
-            break;
-        case IDC_BTN_HOMEPAGE:
-            OnHomepageButtonClick(hWnd);
-            break;
+        switch (LOWORD(wParam))
+        {
+        case IDC_BTN_START:    OnStartButtonClick(hWnd);    break;
+        case IDC_BTN_PAUSE:    OnPauseButtonClick(hWnd);    break;
+        case IDC_BTN_RESET:    OnResetButtonClick(hWnd);    break;
+        case IDC_BTN_HOMEPAGE: OnHomepageButtonClick(hWnd); break;
         }
+        break;
     }
-    break;
-
     case WM_TIMER:
     {
-        if (g_remainingSeconds > 0) {
+        if (g_remainingSeconds > 0)
+        {
             g_remainingSeconds--;
-            RefreshTimerDisplay(hWnd);
+            UpdateTimerDisplay(hWnd);
         }
 
-        if (g_remainingSeconds <= 0) {
+        if (g_remainingSeconds <= 0)
+        {
             KillTimer(hWnd, g_timerId);
             g_timerId = 0;
             g_timerState = TimerState::STOPPED;
-            RunTimerCompletionCommand(hWnd);
-            UpdateUIControlStates(hWnd);
+            ExecuteTimerCommand(hWnd);
+            UpdateControlStatesByTimerStatus(hWnd);
             MessageBox(hWnd, L"Timer finished and command executed.", L"Notification", MB_OK | MB_ICONINFORMATION);
         }
+        break;
     }
-    break;
-
     case WM_DESTROY:
-        if (g_timerId != 0) {
+    {
+        SaveCommandHistory(hWnd);
+        if (g_timerId != 0)
+        {
             KillTimer(hWnd, g_timerId);
         }
-        // Clean up GDI font resources.
         if (g_hDefaultFont) DeleteObject(g_hDefaultFont);
         if (g_hTimerFont) DeleteObject(g_hTimerFont);
         PostQuitMessage(0);
         break;
-
+    }
     default:
+    {
         return DefWindowProc(hWnd, message, wParam, lParam);
+    }
     }
     return 0;
 }
 
-/**
- * @brief Handles the 'Start/Resume' button click event.
- */
-void OnStartButtonClick(HWND hWnd) {
-    if (g_timerState == TimerState::STOPPED || g_timerState == TimerState::PAUSED) {
-        // If the timer is stopped, read the input values.
-        if (g_timerState == TimerState::STOPPED) {
-            wchar_t hourStr[10], minStr[10], secStr[10];
-            GetDlgItemText(hWnd, IDC_EDIT_HOUR, hourStr, 10);
-            GetDlgItemText(hWnd, IDC_EDIT_MIN, minStr, 10);
-            GetDlgItemText(hWnd, IDC_EDIT_SEC, secStr, 10);
-
-            try {
-                int hours = (wcslen(hourStr) > 0) ? std::stoi(hourStr) : 0;
-                int minutes = (wcslen(minStr) > 0) ? std::stoi(minStr) : 0;
-                int seconds = (wcslen(secStr) > 0) ? std::stoi(secStr) : 0;
-                g_remainingSeconds = (hours * 3600) + (minutes * 60) + seconds;
-            }
-            catch (const std::exception&) {
-                MessageBox(hWnd, L"Please enter valid numbers for the time.", L"Input Error", MB_OK | MB_ICONERROR);
-                g_remainingSeconds = 0;
-                return;
-            }
-        }
-
-        // Start the timer if there is time remaining.
-        if (g_remainingSeconds > 0) {
-            g_timerId = SetTimer(hWnd, 1, 1000, NULL);
-            g_timerState = TimerState::RUNNING;
-            UpdateUIControlStates(hWnd);
-        }
-        else if (g_timerState == TimerState::STOPPED) {
-            MessageBox(hWnd, L"Please enter a time greater than 0 seconds.", L"Input Error", MB_OK | MB_ICONWARNING);
-        }
-    }
-}
+//================================================================================================//
+// UI Management Functions
+//================================================================================================//
 
 /**
- * @brief Handles the 'Pause' button click event.
+ * @brief Creates and positions all UI controls in the main window.
  */
-void OnPauseButtonClick(HWND hWnd) {
-    if (g_timerState == TimerState::RUNNING) {
-        KillTimer(hWnd, g_timerId);
-        g_timerId = 0;
-        g_timerState = TimerState::PAUSED;
-        UpdateUIControlStates(hWnd);
-    }
-}
-
-/**
- * @brief Handles the 'Reset' button click event.
- */
-void OnResetButtonClick(HWND hWnd) {
-    if (g_timerId != 0) {
-        KillTimer(hWnd, g_timerId);
-        g_timerId = 0;
-    }
-    g_remainingSeconds = 0;
-    g_timerState = TimerState::STOPPED;
-    // Reset the display, but keep the user's input values.
-    RefreshTimerDisplay(hWnd);
-    UpdateUIControlStates(hWnd);
-}
-
-/**
- * @brief Handles the 'Homepage' button click event.
- */
-void OnHomepageButtonClick(HWND hWnd) {
-    ShellExecute(hWnd, L"open", L"https://github.com/edgarp9/CommandTimer", NULL, NULL, SW_SHOWNORMAL);
-}
-
-/**
- * @brief Creates and positions all the UI controls in the main window.
- * @param hWnd Handle to the main window.
- */
-void InitializeWindowControls(HWND hWnd) {
-    // Create fonts for the UI.
+void CreateMainWindowControls(HWND hWnd)
+{
+    // --- Create Fonts ---
     g_hDefaultFont = CreateFont(16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Segoe UI");
     g_hTimerFont = CreateFont(50, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH | FF_SWISS, L"Arial");
 
-    // Time setting controls.
+    // --- Create Controls ---
+    // Time setting controls
     CreateWindow(L"static", L"Set Time:", WS_CHILD | WS_VISIBLE, 20, 20, 80, 20, hWnd, NULL, g_hInst, NULL);
-    CreateWindow(L"edit", L"0", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER | ES_CENTER, 110, 20, 50, 25, hWnd, (HMENU)IDC_EDIT_HOUR, g_hInst, NULL);
+    CreateWindow(L"edit", L"0", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER | ES_CENTER, 110, 20, 50, 25, hWnd, (HMENU)(INT_PTR)IDC_EDIT_HOUR, g_hInst, NULL);
     CreateWindow(L"static", L"h", WS_CHILD | WS_VISIBLE, 165, 22, 20, 20, hWnd, NULL, g_hInst, NULL);
-    CreateWindow(L"edit", L"0", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER | ES_CENTER, 195, 20, 50, 25, hWnd, (HMENU)IDC_EDIT_MIN, g_hInst, NULL);
+    CreateWindow(L"edit", L"0", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER | ES_CENTER, 195, 20, 50, 25, hWnd, (HMENU)(INT_PTR)IDC_EDIT_MIN, g_hInst, NULL);
     CreateWindow(L"static", L"m", WS_CHILD | WS_VISIBLE, 250, 22, 20, 20, hWnd, NULL, g_hInst, NULL);
-    CreateWindow(L"edit", L"0", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER | ES_CENTER, 280, 20, 50, 25, hWnd, (HMENU)IDC_EDIT_SEC, g_hInst, NULL);
+    CreateWindow(L"edit", L"0", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_NUMBER | ES_CENTER, 280, 20, 50, 25, hWnd, (HMENU)(INT_PTR)IDC_EDIT_SEC, g_hInst, NULL);
     CreateWindow(L"static", L"s", WS_CHILD | WS_VISIBLE, 335, 22, 20, 20, hWnd, NULL, g_hInst, NULL);
 
-    // Command execution controls.
+    // Command execution controls
     CreateWindow(L"static", L"Command:", WS_CHILD | WS_VISIBLE, 20, 60, 80, 20, hWnd, NULL, g_hInst, NULL);
-    CreateWindow(L"edit", L"notepad.exe", WS_CHILD | WS_VISIBLE | WS_BORDER, 110, 60, 280, 25, hWnd, (HMENU)IDC_EDIT_CMD, g_hInst, NULL);
+    CreateWindow(L"combobox", L"", CBS_DROPDOWN | WS_CHILD | WS_VISIBLE | WS_VSCROLL, 110, 60, 280, 150, hWnd, (HMENU)(INT_PTR)IDC_COMBO_CMD, g_hInst, NULL);
 
-    // Action buttons.
-    CreateWindow(L"button", L"Start", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 20, 100, 95, 30, hWnd, (HMENU)IDC_BTN_START, g_hInst, NULL);
-    CreateWindow(L"button", L"Pause", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 120, 100, 85, 30, hWnd, (HMENU)IDC_BTN_PAUSE, g_hInst, NULL);
-    CreateWindow(L"button", L"Reset", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 210, 100, 85, 30, hWnd, (HMENU)IDC_BTN_RESET, g_hInst, NULL);
-    CreateWindow(L"button", L"Homepage", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 300, 100, 90, 30, hWnd, (HMENU)IDC_BTN_HOMEPAGE, g_hInst, NULL);
+    // Action buttons
+    CreateWindow(L"button", L"Start", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 20, 100, 95, 30, hWnd, (HMENU)(INT_PTR)IDC_BTN_START, g_hInst, NULL);
+    CreateWindow(L"button", L"Pause", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 120, 100, 85, 30, hWnd, (HMENU)(INT_PTR)IDC_BTN_PAUSE, g_hInst, NULL);
+    CreateWindow(L"button", L"Reset", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 210, 100, 85, 30, hWnd, (HMENU)(INT_PTR)IDC_BTN_RESET, g_hInst, NULL);
+    CreateWindow(L"button", L"Homepage", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 300, 100, 90, 30, hWnd, (HMENU)(INT_PTR)IDC_BTN_HOMEPAGE, g_hInst, NULL);
 
-    // Timer display static text.
-    HWND hStaticTimerDisplay = CreateWindow(L"static", L"00:00:00", WS_CHILD | WS_VISIBLE | SS_CENTER, 20, 150, 370, 50, hWnd, (HMENU)IDC_STATIC_TIMER_DISPLAY, g_hInst, NULL);
+    // Timer display
+    HWND hStaticTimerDisplay = CreateWindow(L"static", L"00:00:00", WS_CHILD | WS_VISIBLE | SS_CENTER, 20, 150, 370, 50, hWnd, (HMENU)(INT_PTR)IDC_STATIC_TIMER_DISPLAY, g_hInst, NULL);
 
-    // Apply the default font to all child windows (controls).
+    // --- Apply Fonts ---
     EnumChildWindows(hWnd, [](HWND hwnd, LPARAM lParam) -> BOOL {
         SendMessage(hwnd, WM_SETFONT, (WPARAM)lParam, TRUE);
         return TRUE;
         }, (LPARAM)g_hDefaultFont);
 
-    // Apply the special larger font to the timer display.
     SendMessage(hStaticTimerDisplay, WM_SETFONT, (WPARAM)g_hTimerFont, TRUE);
 
-    UpdateUIControlStates(hWnd);
+    // --- Load Initial Data ---
+    LoadCommandHistory(hWnd);
+    UpdateControlStatesByTimerStatus(hWnd);
 }
 
 /**
  * @brief Updates the timer display with the current remaining time.
- * @param hWnd Handle to the main window.
  */
-void RefreshTimerDisplay(HWND hWnd) {
+void UpdateTimerDisplay(HWND hWnd)
+{
     int h = g_remainingSeconds / 3600;
     int m = (g_remainingSeconds % 3600) / 60;
     int s = g_remainingSeconds % 60;
@@ -275,26 +246,141 @@ void RefreshTimerDisplay(HWND hWnd) {
 }
 
 /**
- * @brief Executes the command specified in the command input box.
- * @param hWnd Handle to the main window.
+ * @brief Enables or disables UI controls based on the current timer state.
  */
-void RunTimerCompletionCommand(HWND hWnd) {
+void UpdateControlStatesByTimerStatus(HWND hWnd)
+{
+    bool isStopped = (g_timerState == TimerState::STOPPED);
+    bool isRunning = (g_timerState == TimerState::RUNNING);
+    bool isPaused = (g_timerState == TimerState::PAUSED);
+
+    // Enable time and command inputs only when stopped
+    EnableWindow(GetDlgItem(hWnd, IDC_EDIT_HOUR), isStopped);
+    EnableWindow(GetDlgItem(hWnd, IDC_EDIT_MIN), isStopped);
+    EnableWindow(GetDlgItem(hWnd, IDC_EDIT_SEC), isStopped);
+    EnableWindow(GetDlgItem(hWnd, IDC_COMBO_CMD), isStopped);
+
+    // Update button states
+    EnableWindow(GetDlgItem(hWnd, IDC_BTN_START), isStopped || isPaused);
+    EnableWindow(GetDlgItem(hWnd, IDC_BTN_PAUSE), isRunning);
+    EnableWindow(GetDlgItem(hWnd, IDC_BTN_RESET), isRunning || isPaused);
+
+    // Change "Start" button text to "Resume" if paused
+    SetDlgItemText(hWnd, IDC_BTN_START, isPaused ? L"Resume" : L"Start");
+}
+
+//================================================================================================//
+// Event Handlers
+//================================================================================================//
+
+/**
+ * @brief Handles the 'Start/Resume' button click event.
+ */
+void OnStartButtonClick(HWND hWnd)
+{
+    if (g_timerState == TimerState::STOPPED)
+    {
+        wchar_t hourStr[10], minStr[10], secStr[10];
+        GetDlgItemText(hWnd, IDC_EDIT_HOUR, hourStr, 10);
+        GetDlgItemText(hWnd, IDC_EDIT_MIN, minStr, 10);
+        GetDlgItemText(hWnd, IDC_EDIT_SEC, secStr, 10);
+
+        try
+        {
+            int hours = (wcslen(hourStr) > 0) ? std::stoi(hourStr) : 0;
+            int minutes = (wcslen(minStr) > 0) ? std::stoi(minStr) : 0;
+            int seconds = (wcslen(secStr) > 0) ? std::stoi(secStr) : 0;
+            g_remainingSeconds = (hours * 3600) + (minutes * 60) + seconds;
+        }
+        catch (const std::exception&)
+        {
+            MessageBox(hWnd, L"Please enter valid numbers for the time.", L"Input Error", MB_OK | MB_ICONERROR);
+            g_remainingSeconds = 0;
+            return;
+        }
+    }
+
+    if (g_remainingSeconds > 0)
+    {
+        g_timerId = SetTimer(hWnd, 1, 1000, NULL);
+        g_timerState = TimerState::RUNNING;
+        SaveCommandHistory(hWnd);
+    }
+    else if (g_timerState == TimerState::STOPPED)
+    {
+        MessageBox(hWnd, L"Please enter a time greater than 0 seconds.", L"Input Error", MB_OK | MB_ICONWARNING);
+    }
+
+    UpdateControlStatesByTimerStatus(hWnd);
+}
+
+/**
+ * @brief Handles the 'Pause' button click event.
+ */
+void OnPauseButtonClick(HWND hWnd)
+{
+    if (g_timerState == TimerState::RUNNING)
+    {
+        KillTimer(hWnd, g_timerId);
+        g_timerId = 0;
+        g_timerState = TimerState::PAUSED;
+        UpdateControlStatesByTimerStatus(hWnd);
+    }
+}
+
+/**
+ * @brief Handles the 'Reset' button click event.
+ */
+void OnResetButtonClick(HWND hWnd)
+{
+    if (g_timerId != 0)
+    {
+        KillTimer(hWnd, g_timerId);
+        g_timerId = 0;
+    }
+    g_remainingSeconds = 0;
+    g_timerState = TimerState::STOPPED;
+    UpdateTimerDisplay(hWnd);
+    UpdateControlStatesByTimerStatus(hWnd);
+}
+
+/**
+ * @brief Handles the 'Homepage' button click event.
+ */
+void OnHomepageButtonClick(HWND hWnd)
+{
+    ShellExecute(hWnd, L"open", L"https://github.com/edgarp9/CommandTimer", NULL, NULL, SW_SHOWNORMAL);
+}
+
+//================================================================================================//
+// Core Logic Functions
+//================================================================================================//
+
+/**
+ * @brief Executes the command specified in the combo box when the timer finishes.
+ */
+void ExecuteTimerCommand(HWND hWnd)
+{
     wchar_t cmd[512]{};
-    GetDlgItemTextW(hWnd, IDC_EDIT_CMD, cmd, 512);
+    GetDlgItemTextW(hWnd, IDC_COMBO_CMD, cmd, 512);
     if (cmd[0] == L'\0') return;
 
-    // Use ShellExecute for broader compatibility (URLs, files, folders).
+    SaveCommandHistory(hWnd); // Ensure the executed command is saved
+
+    // Try executing with ShellExecute first
     HINSTANCE hInst = ShellExecute(hWnd, L"open", cmd, NULL, NULL, SW_SHOWNORMAL);
-    if ((INT_PTR)hInst <= 32) {
-        // If ShellExecute fails, fall back to CreateProcess (for commands with arguments).
+    if ((INT_PTR)hInst <= 32)
+    {
+        // If ShellExecute fails, fallback to CreateProcess
         STARTUPINFOW si{ sizeof(si) };
         PROCESS_INFORMATION pi{};
         std::vector<wchar_t> line(cmd, cmd + wcslen(cmd) + 1);
-        if (!CreateProcessW(NULL, line.data(), NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+
+        if (!CreateProcessW(NULL, line.data(), NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
+        {
             DWORD err = GetLastError();
-            wchar_t buf[256];
-            swprintf(buf, 256, L"Failed to execute command (Error code: %lu)", err);
-            MessageBoxW(hWnd, buf, L"Execution Error", MB_OK | MB_ICONERROR);
+            std::wstring errorMsg = std::format(L"Failed to execute command (Error code: {})", err);
+            MessageBoxW(hWnd, errorMsg.c_str(), L"Execution Error", MB_OK | MB_ICONERROR);
             return;
         }
         CloseHandle(pi.hProcess);
@@ -302,31 +388,116 @@ void RunTimerCompletionCommand(HWND hWnd) {
     }
 }
 
+//================================================================================================//
+// INI File and History Management
+//================================================================================================//
+
 /**
- * @brief Enables or disables UI controls based on the current timer state.
- * @param hWnd Handle to the main window.
+ * @brief Determines the path for the INI file (same directory as the exe).
  */
-void UpdateUIControlStates(HWND hWnd) {
-    bool isStopped = (g_timerState == TimerState::STOPPED);
-    bool isRunning = (g_timerState == TimerState::RUNNING);
-    bool isPaused = (g_timerState == TimerState::PAUSED);
-
-    // Enable input fields only when the timer is stopped.
-    EnableWindow(GetDlgItem(hWnd, IDC_EDIT_HOUR), isStopped);
-    EnableWindow(GetDlgItem(hWnd, IDC_EDIT_MIN), isStopped);
-    EnableWindow(GetDlgItem(hWnd, IDC_EDIT_SEC), isStopped);
-    EnableWindow(GetDlgItem(hWnd, IDC_EDIT_CMD), isStopped);
-
-    // Update button states.
-    EnableWindow(GetDlgItem(hWnd, IDC_BTN_START), isStopped || isPaused);
-    EnableWindow(GetDlgItem(hWnd, IDC_BTN_PAUSE), isRunning);
-    EnableWindow(GetDlgItem(hWnd, IDC_BTN_RESET), isRunning || isPaused);
-
-    // Change "Start" button text to "Resume" when paused.
-    if (isPaused) {
-        SetDlgItemText(hWnd, IDC_BTN_START, L"Resume");
+void SetIniFilePath()
+{
+    GetModuleFileNameW(NULL, g_iniFilePath, MAX_PATH);
+    wchar_t* dot = wcsrchr(g_iniFilePath, L'.');
+    if (dot)
+    {
+        wcscpy_s(dot, MAX_PATH - (dot - g_iniFilePath), L".ini");
     }
-    else {
-        SetDlgItemText(hWnd, IDC_BTN_START, L"Start");
+    else
+    {
+        wcscat_s(g_iniFilePath, MAX_PATH, L".ini");
     }
+}
+
+/**
+ * @brief Loads the command history from the INI file into the ComboBox.
+ */
+void LoadCommandHistory(HWND hWnd)
+{
+    HWND hCombo = GetDlgItem(hWnd, IDC_COMBO_CMD);
+    const wchar_t* section = L"CommandHistory";
+
+    int count = GetPrivateProfileIntW(section, L"Count", 0, g_iniFilePath);
+
+    for (int i = 1; i <= count; ++i)
+    {
+        wchar_t key[20];
+        swprintf_s(key, L"Command%d", i);
+        wchar_t cmd[512];
+        GetPrivateProfileStringW(section, key, L"", cmd, 512, g_iniFilePath);
+        if (wcslen(cmd) > 0)
+        {
+            SendMessage(hCombo, CB_ADDSTRING, 0, (LPARAM)cmd);
+        }
+    }
+
+    if (count > 0)
+    {
+        SendMessage(hCombo, CB_SETCURSEL, 0, 0);
+    }
+    else
+    {
+        // Provide a default command if history is empty
+        SetDlgItemTextW(hWnd, IDC_COMBO_CMD, L"notepad.exe");
+    }
+}
+
+/**
+ * @brief Saves the current command history from the ComboBox to the INI file.
+ * It avoids duplicates and limits the history size.
+ */
+void SaveCommandHistory(HWND hWnd)
+{
+    const wchar_t* section = L"CommandHistory";
+    HWND hCombo = GetDlgItem(hWnd, IDC_COMBO_CMD);
+
+    std::vector<std::wstring> history;
+    wchar_t currentCmd[512];
+    GetDlgItemTextW(hWnd, IDC_COMBO_CMD, currentCmd, 512);
+
+    // 1. Add the current command to the top of the history if it's not empty.
+    if (wcslen(currentCmd) > 0)
+    {
+        history.push_back(currentCmd);
+    }
+
+    // 2. Read existing commands from the INI file.
+    int oldCount = GetPrivateProfileIntW(section, L"Count", 0, g_iniFilePath);
+    for (int i = 1; i <= oldCount; ++i)
+    {
+        if (history.size() >= MAX_HISTORY) break;
+
+        wchar_t key[20];
+        swprintf_s(key, L"Command%d", i);
+        wchar_t oldCmd[512];
+        GetPrivateProfileStringW(section, key, L"", oldCmd, 512, g_iniFilePath);
+
+        // 3. Add old command only if it's not already in our new history list.
+        if (wcslen(oldCmd) > 0 &&
+            std::find(history.begin(), history.end(), oldCmd) == history.end())
+        {
+            history.push_back(oldCmd);
+        }
+    }
+
+    // 4. Clear the old section and write the new, cleaned history to the INI file.
+    WritePrivateProfileStringW(section, NULL, NULL, g_iniFilePath);
+    WritePrivateProfileStringW(section, L"Count", std::to_wstring(history.size()).c_str(), g_iniFilePath);
+
+    for (size_t i = 0; i < history.size(); ++i)
+    {
+        wchar_t key[20];
+        swprintf_s(key, L"Command%zu", i + 1); // << FIXED HERE
+        WritePrivateProfileStringW(section, key, history[i].c_str(), g_iniFilePath);
+    }
+
+    // 5. Update the ComboBox UI to match the newly saved history.
+    SendMessage(hCombo, CB_RESETCONTENT, 0, 0);
+    for (const auto& cmd : history)
+    {
+        SendMessage(hCombo, CB_ADDSTRING, 0, (LPARAM)cmd.c_str());
+    }
+
+    // Restore the text that the user might have been editing.
+    SetDlgItemTextW(hWnd, IDC_COMBO_CMD, currentCmd);
 }
