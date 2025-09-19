@@ -5,6 +5,10 @@
 #include <format>
 #include <stdexcept>
 #include <algorithm>
+#include <string_view>
+#include <optional>
+#include <limits>
+
 
 //================================================================================================//
 // Global Variables and Constants
@@ -30,6 +34,15 @@ constexpr int IDC_STATIC_TIMER_DISPLAY = 108;
 constexpr int IDC_BTN_HOMEPAGE = 109;
 constexpr int MAX_HISTORY = 20;
 
+// --- CommandLine Options ---
+struct CommandLineOptions {
+    bool startImmediately = false;
+    int hours = 0;
+    int minutes = 0;
+    int seconds = 0;
+    std::wstring command = std::wstring();
+};
+
 // --- Global Handles and Variables ---
 HINSTANCE g_hInst;
 HWND      g_hWnd;
@@ -47,6 +60,7 @@ wchar_t   g_iniFilePath[MAX_PATH];
 // --- Core Win32 Functions ---
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 int WINAPI wWinMain(HINSTANCE, HINSTANCE, PWSTR, int);
+std::optional<CommandLineOptions> ParseCommandLineArgs();
 
 // --- UI Management ---
 void CreateMainWindowControls(HWND hWnd);
@@ -67,9 +81,12 @@ void SetIniFilePath();
 void LoadCommandHistory(HWND hWnd);
 void SaveCommandHistory(HWND hWnd);
 
+// --- Utility ---
+std::optional<int> ValidateAndParsePositiveInt(std::wstring_view s);
+
 
 //================================================================================================//
-// Main Application Entry Point
+// Core Win32 Functions
 //================================================================================================//
 
 /**
@@ -94,7 +111,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     g_hWnd = CreateWindowEx(
         0,
         CLASS_NAME,
-        L"Command Timer v1.1",
+        L"Command Timer v1.2",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
         CW_USEDEFAULT, CW_USEDEFAULT, 420, 280,
         NULL, NULL, hInstance, NULL
@@ -105,8 +122,41 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         return 0;
     }
 
+    bool startImmediately = false;
+    if (auto retCmdOptions = ParseCommandLineArgs(); retCmdOptions.has_value()) {
+        const auto& cmdOptions = retCmdOptions.value();
+
+        startImmediately = cmdOptions.startImmediately;
+
+        g_remainingSeconds = (cmdOptions.hours * 3600) + (cmdOptions.minutes * 60) + cmdOptions.seconds;
+        if (g_remainingSeconds > 0) {
+            SetDlgItemInt(g_hWnd, IDC_EDIT_HOUR, cmdOptions.hours, FALSE);
+            SetDlgItemInt(g_hWnd, IDC_EDIT_MIN, cmdOptions.minutes, FALSE);
+            SetDlgItemInt(g_hWnd, IDC_EDIT_SEC, cmdOptions.seconds, FALSE);
+            UpdateTimerDisplay(g_hWnd);
+        }
+
+        if (!cmdOptions.command.empty()) {
+            SetDlgItemText(g_hWnd, IDC_COMBO_CMD, cmdOptions.command.c_str());
+        }
+    }
+    else
+    {
+        const wchar_t* messageText = L"Invalid Argument Error: Check your arguments.\n"
+            L"Supports the arguments -start -h -m -s -cmd.\n"
+            L"-cmd must be the last argument.\n"
+            L"Example: CommandTimer.exe -start -m 30 -cmd \"notepad.exe\"";
+        MessageBoxW(NULL, messageText, L"Argument Error", MB_OK | MB_ICONERROR);
+    }
+
     ShowWindow(g_hWnd, nCmdShow);
     UpdateWindow(g_hWnd);
+
+    if (startImmediately && g_remainingSeconds > 0)
+    {
+        // Use PostMessage to ensure the window is fully initialized before starting
+        PostMessage(g_hWnd, WM_COMMAND, MAKEWPARAM(IDC_BTN_START, BN_CLICKED), 0);
+    }
 
     MSG msg = {};
     while (GetMessage(&msg, NULL, 0, 0))
@@ -117,10 +167,6 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 
     return 0;
 }
-
-//================================================================================================//
-// Window Procedure
-//================================================================================================//
 
 /**
  * @brief Processes messages for the main window.
@@ -182,6 +228,67 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
     }
     }
     return 0;
+}
+
+std::optional<CommandLineOptions> ParseCommandLineArgs() {
+    int argc;
+    LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+
+    if (argv == NULL || argc < 2) {
+        if (argv) LocalFree(argv);
+        return CommandLineOptions{};
+    }
+
+    CommandLineOptions options;
+    bool success = true;
+
+    for (int i = 1; i < argc; ++i) {
+        std::wstring_view arg = argv[i];
+
+        if (arg == L"-start") {
+            options.startImmediately = true;
+        }
+        else if (arg == L"-h" || arg == L"-m" || arg == L"-s") {
+            if (i + 1 >= argc) { 
+                success = false;
+                break;
+            }
+
+            auto value = ValidateAndParsePositiveInt(argv[++i]);
+            if (!value.has_value()) {
+                success = false;
+                break;
+            }
+
+            if (arg == L"-h") options.hours = value.value();
+            else if (arg == L"-m") options.minutes = value.value();
+            else if (arg == L"-s") options.seconds = value.value();
+        }
+        else if (arg == L"-cmd") {
+            if (i + 1 >= argc) {
+                success = false;
+                break;
+            }
+
+            options.command = argv[++i];
+            while (i + 1 < argc && argv[i + 1][0] != L'-') {
+                options.command += L" ";
+                options.command += argv[++i];
+            }
+        }
+        else {
+            success = false;
+            break;
+        }
+    }
+
+    LocalFree(argv);
+
+    if (success) {
+        return options;
+    }
+
+    return std::nullopt;
 }
 
 //================================================================================================//
@@ -285,19 +392,14 @@ void OnStartButtonClick(HWND hWnd)
         GetDlgItemText(hWnd, IDC_EDIT_MIN, minStr, 10);
         GetDlgItemText(hWnd, IDC_EDIT_SEC, secStr, 10);
 
-        try
-        {
-            int hours = (wcslen(hourStr) > 0) ? std::stoi(hourStr) : 0;
-            int minutes = (wcslen(minStr) > 0) ? std::stoi(minStr) : 0;
-            int seconds = (wcslen(secStr) > 0) ? std::stoi(secStr) : 0;
-            g_remainingSeconds = (hours * 3600) + (minutes * 60) + seconds;
-        }
-        catch (const std::exception&)
-        {
-            MessageBox(hWnd, L"Please enter valid numbers for the time.", L"Input Error", MB_OK | MB_ICONERROR);
-            g_remainingSeconds = 0;
-            return;
-        }
+        auto v = ValidateAndParsePositiveInt(hourStr);
+        int hours = (v.has_value()) ? v.value() : 0;
+        v = ValidateAndParsePositiveInt(minStr);
+        int minutes = (v.has_value()) ? v.value() : 0;
+        v = ValidateAndParsePositiveInt(secStr);
+        int seconds = (v.has_value()) ? v.value() : 0;
+
+        g_remainingSeconds = (hours * 3600) + (minutes * 60) + seconds;
     }
 
     if (g_remainingSeconds > 0)
@@ -487,7 +589,7 @@ void SaveCommandHistory(HWND hWnd)
     for (size_t i = 0; i < history.size(); ++i)
     {
         wchar_t key[20];
-        swprintf_s(key, L"Command%zu", i + 1); // << FIXED HERE
+        swprintf_s(key, L"Command%zu", i + 1);
         WritePrivateProfileStringW(section, key, history[i].c_str(), g_iniFilePath);
     }
 
@@ -500,4 +602,23 @@ void SaveCommandHistory(HWND hWnd)
 
     // Restore the text that the user might have been editing.
     SetDlgItemTextW(hWnd, IDC_COMBO_CMD, currentCmd);
+}
+
+//================================================================================================//
+// Utility
+//================================================================================================//
+
+std::optional<int> ValidateAndParsePositiveInt(std::wstring_view s) {
+    if (s.empty()) return std::nullopt;
+
+    int value = 0;
+    constexpr int INT_MAX_VAL = (std::numeric_limits<int>::max)();
+
+    for (wchar_t ch : s) {
+        if (ch < L'0' || ch > L'9') return std::nullopt;
+        int digit = ch - L'0';
+        if (value > (INT_MAX_VAL - digit) / 10) return std::nullopt;
+        value = value * 10 + digit;
+    }
+    return value;
 }
