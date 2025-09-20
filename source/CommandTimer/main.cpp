@@ -32,6 +32,9 @@ constexpr int IDC_BTN_PAUSE = 106;
 constexpr int IDC_BTN_RESET = 107;
 constexpr int IDC_STATIC_TIMER_DISPLAY = 108;
 constexpr int IDC_BTN_HOMEPAGE = 109;
+constexpr int IDC_BTN_PRESET1 = 110;
+constexpr int IDC_BTN_PRESET2 = 111;
+constexpr int IDC_BTN_PRESET3 = 112;
 constexpr int MAX_HISTORY = 20;
 
 // --- CommandLine Options ---
@@ -52,6 +55,10 @@ TimerState g_timerState = TimerState::STOPPED;
 HFONT     g_hDefaultFont = NULL;
 HFONT     g_hTimerFont = NULL;
 wchar_t   g_iniFilePath[MAX_PATH];
+int       g_presetMinutes1 = 5;
+int       g_presetMinutes2 = 30;
+int       g_presetMinutes3 = 50;
+
 
 //================================================================================================//
 // Function Prototypes
@@ -72,12 +79,14 @@ void OnStartButtonClick(HWND hWnd);
 void OnPauseButtonClick(HWND hWnd);
 void OnResetButtonClick(HWND hWnd);
 void OnHomepageButtonClick(HWND hWnd);
+void OnPresetButtonClick(HWND hWnd, int presetMinutes);
 
 // --- Core Logic ---
 void ExecuteTimerCommand(HWND hWnd);
 
 // --- INI File and History Management ---
 void SetIniFilePath();
+void LoadPresetTimes();
 void LoadCommandHistory(HWND hWnd);
 void SaveCommandHistory(HWND hWnd);
 
@@ -96,6 +105,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
 {
     g_hInst = hInstance;
     SetIniFilePath();
+    LoadPresetTimes();
 
     const wchar_t CLASS_NAME[] = L"CommandTimerClass";
 
@@ -111,9 +121,9 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
     g_hWnd = CreateWindowEx(
         0,
         CLASS_NAME,
-        L"Command Timer v1.2",
+        L"Command Timer v1.3",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-        CW_USEDEFAULT, CW_USEDEFAULT, 420, 280,
+        CW_USEDEFAULT, CW_USEDEFAULT, 420, 320,
         NULL, NULL, hInstance, NULL
     );
 
@@ -122,6 +132,7 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         return 0;
     }
 
+    // Command line parsing logic remains the same...
     bool startImmediately = false;
     if (auto retCmdOptions = ParseCommandLineArgs(); retCmdOptions.has_value()) {
         const auto& cmdOptions = retCmdOptions.value();
@@ -149,12 +160,12 @@ int WINAPI wWinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, PWSTR pCmdLine
         MessageBoxW(NULL, messageText, L"Argument Error", MB_OK | MB_ICONERROR);
     }
 
+
     ShowWindow(g_hWnd, nCmdShow);
     UpdateWindow(g_hWnd);
 
     if (startImmediately && g_remainingSeconds > 0)
     {
-        // Use PostMessage to ensure the window is fully initialized before starting
         PostMessage(g_hWnd, WM_COMMAND, MAKEWPARAM(IDC_BTN_START, BN_CLICKED), 0);
     }
 
@@ -188,6 +199,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
         case IDC_BTN_PAUSE:    OnPauseButtonClick(hWnd);    break;
         case IDC_BTN_RESET:    OnResetButtonClick(hWnd);    break;
         case IDC_BTN_HOMEPAGE: OnHomepageButtonClick(hWnd); break;
+        case IDC_BTN_PRESET1:  OnPresetButtonClick(hWnd, g_presetMinutes1); break;
+        case IDC_BTN_PRESET2:  OnPresetButtonClick(hWnd, g_presetMinutes2); break;
+        case IDC_BTN_PRESET3:  OnPresetButtonClick(hWnd, g_presetMinutes3); break;
         }
         break;
     }
@@ -206,7 +220,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
             g_timerState = TimerState::STOPPED;
             ExecuteTimerCommand(hWnd);
             UpdateControlStatesByTimerStatus(hWnd);
-            MessageBox(hWnd, L"Timer finished and command executed.", L"Notification", MB_OK | MB_ICONINFORMATION);
         }
         break;
     }
@@ -249,7 +262,7 @@ std::optional<CommandLineOptions> ParseCommandLineArgs() {
             options.startImmediately = true;
         }
         else if (arg == L"-h" || arg == L"-m" || arg == L"-s") {
-            if (i + 1 >= argc) { 
+            if (i + 1 >= argc) {
                 success = false;
                 break;
             }
@@ -324,8 +337,17 @@ void CreateMainWindowControls(HWND hWnd)
     CreateWindow(L"button", L"Reset", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 210, 100, 85, 30, hWnd, (HMENU)(INT_PTR)IDC_BTN_RESET, g_hInst, NULL);
     CreateWindow(L"button", L"Homepage", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 300, 100, 90, 30, hWnd, (HMENU)(INT_PTR)IDC_BTN_HOMEPAGE, g_hInst, NULL);
 
-    // Timer display
-    HWND hStaticTimerDisplay = CreateWindow(L"static", L"00:00:00", WS_CHILD | WS_VISIBLE | SS_CENTER, 20, 150, 370, 50, hWnd, (HMENU)(INT_PTR)IDC_STATIC_TIMER_DISPLAY, g_hInst, NULL);
+    // --- Preset Buttons ---
+    std::wstring presetLabel1 = std::format(L"{} Min", g_presetMinutes1);
+    std::wstring presetLabel2 = std::format(L"{} Min", g_presetMinutes2);
+    std::wstring presetLabel3 = std::format(L"{} Min", g_presetMinutes3);
+    CreateWindow(L"button", presetLabel1.c_str(), WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 20, 140, 120, 30, hWnd, (HMENU)(INT_PTR)IDC_BTN_PRESET1, g_hInst, NULL);
+    CreateWindow(L"button", presetLabel2.c_str(), WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 145, 140, 120, 30, hWnd, (HMENU)(INT_PTR)IDC_BTN_PRESET2, g_hInst, NULL);
+    CreateWindow(L"button", presetLabel3.c_str(), WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 270, 140, 120, 30, hWnd, (HMENU)(INT_PTR)IDC_BTN_PRESET3, g_hInst, NULL);
+
+
+    // Timer display (position adjusted)
+    HWND hStaticTimerDisplay = CreateWindow(L"static", L"00:00:00", WS_CHILD | WS_VISIBLE | SS_CENTER, 20, 185, 370, 50, hWnd, (HMENU)(INT_PTR)IDC_STATIC_TIMER_DISPLAY, g_hInst, NULL);
 
     // --- Apply Fonts ---
     EnumChildWindows(hWnd, [](HWND hwnd, LPARAM lParam) -> BOOL {
@@ -366,6 +388,12 @@ void UpdateControlStatesByTimerStatus(HWND hWnd)
     EnableWindow(GetDlgItem(hWnd, IDC_EDIT_MIN), isStopped);
     EnableWindow(GetDlgItem(hWnd, IDC_EDIT_SEC), isStopped);
     EnableWindow(GetDlgItem(hWnd, IDC_COMBO_CMD), isStopped);
+
+    // Also enable preset buttons only when stopped
+    EnableWindow(GetDlgItem(hWnd, IDC_BTN_PRESET1), isStopped);
+    EnableWindow(GetDlgItem(hWnd, IDC_BTN_PRESET2), isStopped);
+    EnableWindow(GetDlgItem(hWnd, IDC_BTN_PRESET3), isStopped);
+
 
     // Update button states
     EnableWindow(GetDlgItem(hWnd, IDC_BTN_START), isStopped || isPaused);
@@ -454,6 +482,35 @@ void OnHomepageButtonClick(HWND hWnd)
     ShellExecute(hWnd, L"open", L"https://github.com/edgarp9/CommandTimer", NULL, NULL, SW_SHOWNORMAL);
 }
 
+/**
+ * @brief Handles a click on one of the new preset time buttons.
+ */
+void OnPresetButtonClick(HWND hWnd, int presetMinutes)
+{
+    if (g_timerState != TimerState::STOPPED) return;
+
+    g_remainingSeconds = presetMinutes * 60;
+
+    if (g_remainingSeconds > 0)
+    {
+        // Update the edit controls to reflect the preset time
+        int h = g_remainingSeconds / 3600;
+        int m = (g_remainingSeconds % 3600) / 60;
+        int s = g_remainingSeconds % 60;
+        SetDlgItemInt(hWnd, IDC_EDIT_HOUR, h, FALSE);
+        SetDlgItemInt(hWnd, IDC_EDIT_MIN, m, FALSE);
+        SetDlgItemInt(hWnd, IDC_EDIT_SEC, s, FALSE);
+        UpdateTimerDisplay(hWnd);
+
+        // Start the timer
+        g_timerId = SetTimer(hWnd, 1, 1000, NULL);
+        g_timerState = TimerState::RUNNING;
+        SaveCommandHistory(hWnd);
+        UpdateControlStatesByTimerStatus(hWnd);
+    }
+}
+
+
 //================================================================================================//
 // Core Logic Functions
 //================================================================================================//
@@ -510,6 +567,23 @@ void SetIniFilePath()
         wcscat_s(g_iniFilePath, MAX_PATH, L".ini");
     }
 }
+
+/**
+ * @brief Loads preset times from the INI file. Uses defaults if not found.
+ */
+void LoadPresetTimes()
+{
+    const wchar_t* section = L"PresetTimes";
+    g_presetMinutes1 = GetPrivateProfileIntW(section, L"Time1", 5, g_iniFilePath);
+    g_presetMinutes2 = GetPrivateProfileIntW(section, L"Time2", 30, g_iniFilePath);
+    g_presetMinutes3 = GetPrivateProfileIntW(section, L"Time3", 50, g_iniFilePath);
+
+    // Write the values back to the INI file if it doesn't exist, to make them discoverable
+    WritePrivateProfileStringW(section, L"Time1", std::to_wstring(g_presetMinutes1).c_str(), g_iniFilePath);
+    WritePrivateProfileStringW(section, L"Time2", std::to_wstring(g_presetMinutes2).c_str(), g_iniFilePath);
+    WritePrivateProfileStringW(section, L"Time3", std::to_wstring(g_presetMinutes3).c_str(), g_iniFilePath);
+}
+
 
 /**
  * @brief Loads the command history from the INI file into the ComboBox.
